@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/agentfence/agentfence/internal/api"
 	"github.com/agentfence/agentfence/internal/audit"
@@ -45,6 +44,7 @@ type Gateway struct {
 	policy    PolicyEvaluator
 	forwarder Forwarder
 	auditSink audit.Sink
+	builder   audit.Builder
 	server    *http.Server
 }
 
@@ -75,8 +75,9 @@ func WithAuditSink(sink audit.Sink) Option {
 // New constructs a Gateway with explicit configuration.
 func New(cfg config.Config, logger *slog.Logger, opts ...Option) *Gateway {
 	gateway := &Gateway{
-		cfg:    cfg,
-		logger: logger,
+		cfg:     cfg,
+		logger:  logger,
+		builder: audit.NewBuilder(),
 	}
 	for _, opt := range opts {
 		opt(gateway)
@@ -185,16 +186,7 @@ func (g *Gateway) handleMCP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	decision := g.evaluatePolicy(metadata)
-	event := audit.Event{
-		Timestamp: time.Now().UTC(),
-		Server:    metadata.Server,
-		Tool:      metadata.Tool,
-		Decision:  decision.Action,
-		Reason:    decision.Reason,
-		RuleName:  decision.RuleName,
-		Method:    request.Method,
-		Allowed:   decision.Action == policy.DecisionAllow,
-	}
+	event := g.builder.BuildPolicyDecision(request, metadata.Server, metadata.Tool, metadata.Args, decision)
 	if err := g.recordAudit(r.Context(), event); err != nil {
 		g.writeJSONRPCError(w, http.StatusInternalServerError, request.ID, jsonRPCAuditFailure, "failed to record audit event", map[string]any{"reason": err.Error()})
 		return
@@ -205,11 +197,11 @@ func (g *Gateway) handleMCP(w http.ResponseWriter, r *http.Request) {
 		g.handleAllowed(w, r, request, metadata, decision)
 	case policy.DecisionRequireApproval:
 		g.writeJSONRPCError(w, http.StatusForbidden, request.ID, jsonRPCApprovalRequired, "request requires approval", map[string]any{
-			"status":  "pending_approval",
-			"reason":  decision.Reason,
-			"rule":    decision.RuleName,
-			"server":  metadata.Server,
-			"tool":    metadata.Tool,
+			"status":    "pending_approval",
+			"reason":    decision.Reason,
+			"rule":      decision.RuleName,
+			"server":    metadata.Server,
+			"tool":      metadata.Tool,
 			"forwarded": false,
 		})
 	default:
@@ -347,4 +339,3 @@ func mustMarshal(value any) json.RawMessage {
 	}
 	return encoded
 }
-

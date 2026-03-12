@@ -34,15 +34,21 @@ rules:
 	auditSink := &recordingAuditSink{}
 	gateway := New(config.Default(), testLogger(), WithPolicyEvaluator(engine), WithForwarder(forwarder), WithAuditSink(auditSink))
 
-	response := performMCPRequest(t, gateway.Handler(), "deployer", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"staging"}}}`)
+	response := performMCPRequest(t, gateway.Handler(), "deployer", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"staging","api_key":"top-secret"}}}`)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 	if !forwarder.called {
 		t.Fatal("forwarder.called = false, want true")
 	}
-	if len(auditSink.events) != 1 || auditSink.events[0].Decision != policy.DecisionAllow {
+	if len(auditSink.events) != 1 || auditSink.events[0].Decision.Action != policy.DecisionAllow {
 		t.Fatalf("audit events = %+v, want one allow event", auditSink.events)
+	}
+	if auditSink.events[0].Request.Arguments["environment"] != "staging" {
+		t.Fatalf("audit arguments = %+v, want environment=staging", auditSink.events[0].Request.Arguments)
+	}
+	if auditSink.events[0].Request.Arguments["api_key"] != audit.RedactedValue {
+		t.Fatalf("audit arguments = %+v, want api_key redacted", auditSink.events[0].Request.Arguments)
 	}
 
 	var payload protocol.Response
@@ -103,7 +109,7 @@ rules:
 `)
 	gateway := New(config.Default(), testLogger(), WithPolicyEvaluator(engine))
 
-	response := performMCPRequest(t, gateway.Handler(), "deployer", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"prod"}}}`)
+	response := performMCPRequest(t, gateway.Handler(), "deployer", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"prod","api_key":"shh"}}}`)
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("StatusCode = %d, want %d", response.StatusCode, http.StatusForbidden)
 	}
