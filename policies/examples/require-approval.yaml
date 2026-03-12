@@ -1,0 +1,6 @@
+version: v1
+name: require-approval
+description: Example policy placeholder for sensitive write actions.
+rules:
+  - effect: require_approval
+    tool: github.merge_pull_request

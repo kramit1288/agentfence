@@ -1,0 +1,6 @@
+version: v1
+name: deny-shell
+description: Example policy placeholder for outright denied tools.
+rules:
+  - effect: deny
+    tool: shell.exec

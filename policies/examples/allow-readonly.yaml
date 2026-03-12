@@ -1,0 +1,6 @@
+version: v1
+name: allow-readonly
+description: Example policy placeholder for non-destructive read actions.
+rules:
+  - effect: allow
+    tool: github.list_pull_requests

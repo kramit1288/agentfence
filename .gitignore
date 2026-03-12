@@ -1,0 +1,24 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Go
+bin/
+dist/
+coverage.out
+*.test
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+web/out/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
