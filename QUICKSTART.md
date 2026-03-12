@@ -1,112 +1,219 @@
 # Quickstart
 
-This quickstart gives you a working local AgentFence setup in a few minutes.
+This guide gets AgentFence running locally in the shortest practical path.
+
+AgentFence is currently an early OSS technical preview. The local flow is suitable for evaluation and staging-style demos.
+
+## What you will run
+
+You will start:
+
+- the AgentFence gateway
+- the optional admin UI
+- the mock GitHub MCP demo server
+
+The quickest local setup uses:
+
+- local JSON-file audit storage
+- local JSON-file approval storage
+- one upstream HTTP MCP server
+- a YAML policy file
 
 ## Prerequisites
 
 - Go 1.22+
 - Node.js 20+
 - npm 10+
-- optional: Docker if you want Postgres instead of local JSON storage
+- optional: Docker if you want Postgres later
 
-## 1. Start a mock upstream MCP server
+## 1. Clone and enter the repo
 
-```powershell
-go run ./cmd/mock-github-mcp -addr :8090
-```
-
-## 2. Start the AgentFence gateway
-
-Use the included GitHub demo policy and local JSON-backed audit and approval storage:
-
-```powershell
-$env:AGENTFENCE_POLICY_FILE = "examples/github-mcp/policy.yaml"
-$env:AGENTFENCE_UPSTREAM_URL = "http://127.0.0.1:8090"
-$env:AGENTFENCE_APPROVAL_STORE = "data/demo-approvals.json"
-$env:AGENTFENCE_AUDIT_STORE = "data/demo-audit.json"
-go run ./cmd/agentfence -config examples/github-mcp/config.json
-```
-
-The gateway listens on `http://127.0.0.1:8080` by default.
-
-## 3. Exercise the request path
-
-Allowed read-only request:
-
-```powershell
-curl -sS -X POST "http://127.0.0.1:8080/mcp?server=github-demo" ^
-  -H "Content-Type: application/json" ^
-  --data-binary "@examples/github-mcp/requests/read-repo.json"
-```
-
-Approval-required write request:
-
-```powershell
-curl -sS -X POST "http://127.0.0.1:8080/mcp?server=github-demo" ^
-  -H "Content-Type: application/json" ^
-  -H "X-AgentFence-Actor: demo-user" ^
-  --data-binary "@examples/github-mcp/requests/merge-pr.json"
-```
-
-Denied dangerous request:
-
-```powershell
-curl -sS -X POST "http://127.0.0.1:8080/mcp?server=github-demo" ^
-  -H "Content-Type: application/json" ^
-  --data-binary "@examples/github-mcp/requests/delete-repo.json"
-```
-
-## 4. Inspect approvals and audit data
-
-List pending approvals:
-
-```powershell
-go run ./cmd/agentfence-cli list-approvals --store data/demo-approvals.json
-```
-
-Approve a request:
-
-```powershell
-go run ./cmd/agentfence-cli approve <approval-id> --store data/demo-approvals.json --actor reviewer --reason "approved for testing"
-```
-
-Admin API endpoints:
-
-- `GET /healthz`
-- `GET /api/admin/audit`
-- `GET /api/admin/approvals`
-- `GET /api/admin/policy`
-
-## 5. Start the admin UI
-
-```powershell
+```bash
+git clone https://github.com/<your-username>/agentfence.git
+cd agentfence
+2. Install web dependencies
 cd web
 npm install
-$env:AGENTFENCE_API_BASE = "http://127.0.0.1:8080"
+cd ..
+3. Create local working directories
+mkdir -p .local
+mkdir -p .local/data
+
+On Windows PowerShell:
+
+New-Item -ItemType Directory -Force .local | Out-Null
+New-Item -ItemType Directory -Force .local\data | Out-Null
+4. Start the mock GitHub MCP server
+
+This repo includes a demo upstream MCP server for local evaluation.
+
+go run ./cmd/mock-github-mcp
+
+By default, keep it running in a separate terminal.
+
+Example upstream URL used below:
+
+http://localhost:8081/mcp
+
+If your mock server runs on a different port, adjust the config values accordingly.
+
+5. Create a local config file
+
+Create agentfence.dev.json in the repository root:
+
+{
+  "listen_addr": ":8080",
+  "upstream_url": "http://localhost:8081/mcp",
+  "upstream_timeout": "10s",
+  "approval_store": ".local/data/approvals.json",
+  "audit_store": ".local/data/audit.json",
+  "policy_file": "policies/examples/github-readonly.yaml"
+}
+6. Set environment variables
+
+Linux/macOS:
+
+export AGENTFENCE_CONFIG_FILE=agentfence.dev.json
+export AGENTFENCE_API_BASE=http://localhost:8080
+
+Windows PowerShell:
+
+$env:AGENTFENCE_CONFIG_FILE="agentfence.dev.json"
+$env:AGENTFENCE_API_BASE="http://localhost:8080"
+7. Start the gateway
+go run ./cmd/agentfence
+
+The gateway should now be listening on:
+
+http://localhost:8080
+
+Useful endpoints:
+
+health: GET /healthz
+
+MCP entrypoint: POST /mcp
+
+approvals admin API
+
+audit admin API
+
+8. Start the admin UI
+
+In a separate terminal:
+
+cd web
 npm run dev
-```
 
-Open `http://127.0.0.1:3000`.
+The UI should now be available at:
 
-## Optional: use Postgres instead of local JSON files
+http://localhost:3000
+9. Run the operator CLI
 
-Start Postgres:
+You can inspect or resolve approval requests with the CLI.
 
-```powershell
-docker compose -f deploy/docker-compose.yml up postgres
-```
+Examples:
 
-Then set:
+go run ./cmd/agentfence-cli --help
+go run ./cmd/agentfence-cli approvals list
+go run ./cmd/agentfence-cli approvals approve <approval-id>
+go run ./cmd/agentfence-cli approvals deny <approval-id>
 
-```powershell
-$env:AGENTFENCE_POSTGRES_DSN = "postgres://agentfence:agentfence@127.0.0.1:5432/agentfence?sslmode=disable"
-```
+Adjust flags or environment variables as required by the current CLI implementation.
 
-The gateway runs migrations automatically on startup.
+10. Try the GitHub MCP demo
 
-## What this quickstart does not cover yet
+Use the demo described in docs/demos/github-mcp.md
+.
 
-- authenticated admin access
-- automatic replay after approval
-- stdio upstream transport
-- multi-upstream routing
+Typical flow:
+
+start the mock upstream MCP server
+
+start AgentFence
+
+send a safe MCP tool call
+
+confirm it is allowed and audited
+
+send a risky MCP tool call
+
+confirm it is denied or moved into approval flow
+
+inspect audit events and pending approvals
+
+Example policy
+
+For first local testing, use the example GitHub policy in:
+
+policies/examples/github-readonly.yaml
+
+You can later switch to other example policies or create your own YAML file.
+
+Local validation
+
+From the repo root:
+
+go test ./...
+
+From the web directory:
+
+npm run build
+Common problems
+Build fails because of missing Go dependencies
+
+Run:
+
+go mod tidy
+go test ./...
+Web build fails because of missing npm dependencies
+
+Run:
+
+cd web
+npm install
+npm run build
+No approvals are appearing
+
+Check:
+
+the policy actually uses require_approval
+
+the gateway is using the expected policy file
+
+the approval store path is writable
+
+the tool call is reaching the gateway, not the upstream directly
+
+Audit log is empty
+
+Check:
+
+the request is sent to POST /mcp
+
+the audit store path is writable
+
+the request was not rejected before request processing began
+
+What this quickstart does not cover yet
+
+This quickstart does not cover:
+
+authentication for admin APIs or UI
+
+multi-upstream routing
+
+stdio transport
+
+production deployment hardening
+
+automatic replay of approved requests
+
+Next reading
+
+README.md
+
+docs/architecture.md
+
+docs/threat-model.md
+
+docs/demos/github-mcp.md

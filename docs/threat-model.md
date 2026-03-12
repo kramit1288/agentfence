@@ -1,103 +1,288 @@
 # Threat Model
 
-This document describes the current security assumptions and major risks for AgentFence v0.1.
+## Status
 
-## Security Goals
+This threat model describes the current AgentFence technical preview and the risks it is explicitly trying to reduce.
 
-AgentFence exists to reduce the risk of unsafe MCP tool use by:
+It is not a claim that all security problems are solved.
 
-- enforcing deny-by-default policy decisions
-- requiring human approval for selected operations
-- recording reconstructable audit events
-- preventing obvious secrets from leaking into logs and stored audit data
-- isolating the decision point from upstream MCP server behavior
+AgentFence should currently be treated as an early-stage gateway for evaluation, local development, and staging-style demos.
 
-## Assets To Protect
+## Security posture goals
 
-- credentials embedded in tool arguments or upstream connection strings
-- integrity of policy decisions
-- integrity of approval records
-- integrity and usefulness of audit records
-- downstream systems accessed through MCP tools
+AgentFence exists to improve the safety and governability of MCP tool access by introducing:
 
-## Trust Boundaries
+- policy checks before tool calls are forwarded
+- approval workflows for risky actions
+- audit visibility
+- redaction of likely sensitive fields
+- clearer trust boundaries
 
-### Between agent runtime and AgentFence
+## Primary assets
 
-The caller can send arbitrary HTTP and JSON-RPC input. Requests must be treated as untrusted.
+The most important things to protect are:
 
-### Between AgentFence and upstream MCP servers
+- tool execution authority
+- credentials and secrets in requests or responses
+- audit integrity
+- approval integrity
+- operator trust in recorded history
+- upstream system safety
+- internal data reachable through MCP tools
 
-Upstream MCP servers are treated as potentially untrusted. They may:
+## Trust boundaries
 
-- return malformed JSON-RPC
-- return misleading errors
-- return non-2xx HTTP responses
-- echo or embed sensitive material in error messages
+AgentFence treats these boundaries seriously:
 
-### Between operators and admin surfaces
+### 1. Agent runtime -> AgentFence
 
-The current repository exposes admin APIs and an admin UI, but authentication is not implemented yet. In practice, that means the deployment boundary must provide protection for these endpoints.
+The agent runtime may be buggy, misconfigured, or influenced by adversarial prompts.
 
-## In-Scope Threats
+AgentFence should not assume the caller is always safe or correct.
 
-- malformed JSON-RPC request bodies
-- unsafe default allow behavior
-- approval-required requests bypassing approval
-- upstream failure modes that are accidentally treated as success
-- secret leakage through audit storage or logs
-- race conditions that overwrite a previous approval decision
+### 2. AgentFence -> upstream MCP server
 
-## Current Mitigations
+The upstream MCP server should be treated as potentially untrusted or at least not fully controlled.
 
-### Deny by default
+Why:
 
-- missing policy evaluation falls back to deny
-- unsupported MCP methods are rejected
-- malformed JSON-RPC requests fail safely
-- denied and approval-required requests are not forwarded upstream
+- server behavior can change
+- tool metadata can drift
+- responses can contain dangerous or sensitive content
+- upstream failures may be malformed or inconsistent
 
-### Approval flow protections
+### 3. Operator/admin surfaces
 
-- approval-required requests create durable approval records before returning blocked responses
-- CLI resolution now requires an explicit actor
-- conflicting repository updates are rejected instead of silently overwriting a terminal decision
+Admin APIs and the admin UI expose operationally sensitive state such as:
 
-### Audit protections
+- pending approvals
+- recent audit history
+- policy information
 
-- request arguments are redacted recursively for likely secret keys
-- upstream error text is redacted for inline secrets and URL userinfo
-- upstream target metadata is sanitized before recording
+In the current technical preview, these surfaces are not yet authenticated. This is a known limitation and a major reason the project should not yet be treated as a complete production control plane.
 
-### Upstream protections
+## Threat actors
 
-- non-2xx upstream HTTP responses are treated as failures even if they contain JSON-RPC bodies
-- response bodies are size-limited before decode
-- decode failures and timeouts are surfaced as gateway errors and audited as failures
+Potential threat actors include:
 
-## Known Residual Risks
+- a malicious or compromised upstream MCP server
+- a prompt-injected or misdirected agent
+- an operator making unsafe decisions
+- a developer misconfiguring policy
+- a user sending malformed MCP requests
+- an attacker with access to local storage or admin endpoints
+- a future multi-tenant misuse scenario
 
-### Admin surface is unauthenticated
+## Main threat categories
 
-This is the largest current gap. Anyone who can reach the admin endpoints can read audit and approval data.
+## 1. Dangerous tool execution
 
-### Actor identity is caller-provided
+### Risk
 
-The gateway records `X-AgentFence-Actor`, but does not authenticate or verify it. The value is useful for demos and trusted environments only.
+An agent attempts to invoke a dangerous tool or dangerous tool arguments reach an upstream server.
 
-### Local file storage is not production-grade
+### Examples
 
-The JSON-file audit and approval repositories are good for local development and demos, but not strong enough for multi-process or hostile environments.
+- destructive repo operation
+- write or merge action
+- sensitive message posting
+- dangerous database query
 
-### Upstream output is not deeply normalized
+### Current mitigations
 
-AgentFence validates JSON-RPC structure, but it does not deeply inspect or rewrite all upstream result payloads.
+- policy evaluation before forwarding
+- deny behavior
+- require_approval behavior
+- denied and approval-required requests do not forward upstream
 
-## Deferred Work Before Stronger Production Claims
+### Remaining gaps
 
-- authentication and authorization for admin and approval surfaces
-- signed or otherwise authenticated operator identity
-- automatic replay or resume semantics after approval
-- per-server upstream routing and registration
-- stdio transport implementation and its own hardening review
-- broader end-to-end and race-focused test coverage
+- policy quality depends on configuration correctness
+- there is not yet a richer policy language for deeper semantic controls
+- approved requests do not automatically replay today
+
+## 2. Secret leakage in audit trails
+
+### Risk
+
+Sensitive values appear in logs or stored audit data.
+
+### Examples
+
+- API keys
+- tokens
+- passwords
+- authorization headers
+- secret-like argument values
+
+### Current mitigations
+
+- redaction of likely sensitive keys
+- structured audit event handling instead of naive raw-body logging
+
+### Remaining gaps
+
+- pattern coverage is not perfect
+- future richer content types may require stronger redaction logic
+- operators should still treat stored data carefully
+
+## 3. Malformed or adversarial MCP requests
+
+### Risk
+
+Malformed JSON-RPC or weird input causes unsafe behavior, panics, or accidental allow paths.
+
+### Current mitigations
+
+- explicit protocol parsing
+- narrow current scope
+- deterministic policy actions
+- fail-closed behavior where practical
+
+### Remaining gaps
+
+- wider MCP surface is not yet implemented
+- broader fuzzing and adversarial testing can improve confidence
+
+## 4. Malicious or compromised upstream MCP server
+
+### Risk
+
+The upstream returns dangerous, misleading, or malformed responses, or changes behavior unexpectedly.
+
+### Examples
+
+- tool schema drift
+- unexpected response structure
+- dangerous content in responses
+- unstable or inconsistent behavior
+
+### Current mitigations
+
+- clear trust-boundary framing
+- upstream sits behind AgentFence, not directly behind the agent
+- audit visibility around decisions and outcomes
+
+### Remaining gaps
+
+- upstream trust is still only partially controlled
+- response validation can be strengthened
+- richer policy by tool/server identity is still early
+
+## 5. Approval abuse or integrity loss
+
+### Risk
+
+Approval records are created, modified, or resolved incorrectly.
+
+### Examples
+
+- unsafe approval resolution
+- missing audit linkage
+- inconsistent state between approval history and audit history
+- concurrent resolution issues
+
+### Current mitigations
+
+- durable approval records
+- operator CLI resolution path
+- Postgres-backed repositories available for stronger durability
+
+### Remaining gaps
+
+- atomicity between approval state and audit history can be improved
+- no authentication yet on admin/operator surfaces
+- replay after approval is not automatic
+
+## 6. Admin surface exposure
+
+### Risk
+
+Unauthenticated admin endpoints or UI pages reveal sensitive operational data.
+
+### Current mitigations
+
+- currently mostly controlled by deployment context, not by built-in auth
+
+### Remaining gaps
+
+- this is a real current risk
+- the admin UI and APIs should not be exposed broadly on the internet in the current preview
+- authentication and authorization are future priorities
+
+## 7. Local storage compromise
+
+### Risk
+
+JSON-file approval and audit stores are tampered with or read by unauthorized local users.
+
+### Current mitigations
+
+- local file mode is positioned for development and demos, not broad production use
+- Postgres-backed repositories are available for stronger durability
+
+### Remaining gaps
+
+- file integrity and access control depend on host environment
+- transactional safety is limited in local file mode
+
+## Security assumptions
+
+Current assumptions include:
+
+- local development users control their own machine
+- demo deployments are in limited-trust environments
+- operators understand the project is a technical preview
+- admins do not expose unauthenticated endpoints publicly
+- policy files are reviewed before use
+
+## Non-goals in the current preview
+
+The current technical preview does not yet claim to provide:
+
+- a hardened internet-exposed admin surface
+- full enterprise authn/authz
+- complete replay/resume semantics for approvals
+- complete MCP transport coverage
+- complete multi-tenant isolation
+- complete protection from prompt injection or malicious upstream behavior
+
+## Operational guidance
+
+For current users:
+
+- do not expose admin APIs/UI publicly without additional protection
+- treat upstream MCP servers as potentially untrusted
+- review policy files carefully
+- prefer Postgres-backed storage over local file mode for stronger durability
+- treat audit data as sensitive operational information
+- use the project for evaluation and controlled demos, not as a finished control plane
+
+## Priority future security work
+
+The most important next security steps are:
+
+1. add authentication and authorization for admin APIs and UI
+2. strengthen the relationship between approval state and audit history
+3. improve upstream trust controls and routing controls
+4. expand adversarial testing and malformed-input testing
+5. improve redaction coverage and response handling
+6. support stronger deployment guidance and hardening
+
+## Summary
+
+AgentFence’s current security value comes from introducing a reviewable control point between agents and MCP tools.
+
+Its strongest current protections are:
+
+- deny / approval gating before forwarding
+- non-forwarding of blocked requests
+- redacted audit records
+- a clear trust-boundary model
+
+Its biggest current gaps are:
+
+- unauthenticated admin surfaces
+- incomplete transport and routing support
+- limited replay/resume behavior
+- early-stage operational hardening
