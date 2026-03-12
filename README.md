@@ -139,5 +139,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-No license file is present yet. Add one before publishing if this is intended to be a public OSS release.
+Apache-2.0
 
