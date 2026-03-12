@@ -107,7 +107,7 @@ export default async function Home() {
                   <div>
                     <strong>{item.tool}</strong>
                     <p>
-                      {item.server} · {item.reason}
+                      {item.server} ï¿½ {item.reason}
                     </p>
                   </div>
                   <code>{item.id}</code>
