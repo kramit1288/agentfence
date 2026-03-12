@@ -14,6 +14,7 @@ import (
 	"github.com/agentfence/agentfence/internal/config"
 	"github.com/agentfence/agentfence/internal/gateway"
 	"github.com/agentfence/agentfence/internal/mcp/transport"
+	storagepg "github.com/agentfence/agentfence/internal/storage/postgres"
 	"github.com/agentfence/agentfence/internal/telemetry"
 )
 
@@ -37,8 +38,24 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	logger := telemetry.NewLogger(cfg.Log)
-	approvalService := approval.NewService(approval.NewFileRepository(approvalStorePath()))
-	options := []gateway.Option{gateway.WithApprovalManager(approvalService)}
+	options := make([]gateway.Option, 0)
+	if dsn := os.Getenv("AGENTFENCE_POSTGRES_DSN"); dsn != "" {
+		pgdb, err := storagepg.Open(context.Background(), dsn)
+		if err != nil {
+			return err
+		}
+		defer pgdb.Close()
+		if err := pgdb.Migrate(context.Background()); err != nil {
+			return err
+		}
+		options = append(options,
+			gateway.WithAuditSink(storagepg.NewAuditRepository(pgdb.SQL)),
+			gateway.WithApprovalManager(approval.NewService(storagepg.NewApprovalRepository(pgdb.SQL))),
+		)
+	} else {
+		approvalService := approval.NewService(approval.NewFileRepository(approvalStorePath()))
+		options = append(options, gateway.WithApprovalManager(approvalService))
+	}
 	if upstreamURL := os.Getenv("AGENTFENCE_UPSTREAM_URL"); upstreamURL != "" {
 		forwarder, err := transport.NewHTTPForwarder(transport.Target{Address: upstreamURL}, &http.Client{Timeout: upstreamTimeout()})
 		if err != nil {

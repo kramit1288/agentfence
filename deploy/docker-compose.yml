@@ -1,7 +1,24 @@
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: agentfence
+      POSTGRES_PASSWORD: agentfence
+      POSTGRES_DB: agentfence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   agentfence:
     image: agentfence:dev
+    depends_on:
+      - postgres
     ports:
       - "8080:8080"
     environment:
       AGENTFENCE_LISTEN_ADDR: ":8080"
+      AGENTFENCE_POSTGRES_DSN: "postgres://agentfence:agentfence@postgres:5432/agentfence?sslmode=disable"
+
+volumes:
+  postgres-data:
