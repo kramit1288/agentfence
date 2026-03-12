@@ -8,7 +8,7 @@ import (
 )
 
 // NewHandler returns the operator-facing HTTP handler surface.
-func NewHandler(logger *slog.Logger) http.Handler {
+func NewHandler(logger *slog.Logger, mcpHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -22,6 +22,9 @@ func NewHandler(logger *slog.Logger) http.Handler {
 			"status": "ok",
 		})
 	})
+	if mcpHandler != nil {
+		mux.Handle("/mcp", mcpHandler)
+	}
 
 	return requestLogger(logger, mux)
 }
