@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/agentfence/agentfence/internal/approval"
+	"github.com/agentfence/agentfence/internal/audit"
 	"github.com/agentfence/agentfence/internal/config"
 	"github.com/agentfence/agentfence/internal/gateway"
 	"github.com/agentfence/agentfence/internal/mcp/transport"
+	"github.com/agentfence/agentfence/internal/policy"
 	storagepg "github.com/agentfence/agentfence/internal/storage/postgres"
 	"github.com/agentfence/agentfence/internal/telemetry"
 )
@@ -39,6 +41,15 @@ func run() error {
 	}
 	logger := telemetry.NewLogger(cfg.Log)
 	options := make([]gateway.Option, 0)
+
+	policyEngine, err := loadPolicyEngine()
+	if err != nil {
+		return err
+	}
+	if policyEngine != nil {
+		options = append(options, gateway.WithPolicyEvaluator(policyEngine))
+	}
+
 	if dsn := os.Getenv("AGENTFENCE_POSTGRES_DSN"); dsn != "" {
 		pgdb, err := storagepg.Open(context.Background(), dsn)
 		if err != nil {
@@ -54,7 +65,11 @@ func run() error {
 		)
 	} else {
 		approvalService := approval.NewService(approval.NewFileRepository(approvalStorePath()))
-		options = append(options, gateway.WithApprovalManager(approvalService))
+		auditRepo := audit.NewFileRepository(auditStorePath())
+		options = append(options,
+			gateway.WithApprovalManager(approvalService),
+			gateway.WithAuditSink(auditRepo),
+		)
 	}
 	if upstreamURL := os.Getenv("AGENTFENCE_UPSTREAM_URL"); upstreamURL != "" {
 		forwarder, err := transport.NewHTTPForwarder(transport.Target{Address: upstreamURL}, &http.Client{Timeout: upstreamTimeout()})
@@ -69,11 +84,34 @@ func run() error {
 	return app.Run(ctx)
 }
 
+func loadPolicyEngine() (*policy.Engine, error) {
+	policyPath := os.Getenv("AGENTFENCE_POLICY_FILE")
+	if policyPath == "" {
+		return nil, nil
+	}
+	document, err := policy.LoadFile(policyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load policy file %q: %w", policyPath, err)
+	}
+	engine, err := policy.Compile(document)
+	if err != nil {
+		return nil, fmt.Errorf("compile policy file %q: %w", policyPath, err)
+	}
+	return engine, nil
+}
+
 func approvalStorePath() string {
 	if path := os.Getenv("AGENTFENCE_APPROVAL_STORE"); path != "" {
 		return path
 	}
 	return "data/approvals.json"
+}
+
+func auditStorePath() string {
+	if path := os.Getenv("AGENTFENCE_AUDIT_STORE"); path != "" {
+		return path
+	}
+	return "data/audit.json"
 }
 
 func upstreamTimeout() time.Duration {

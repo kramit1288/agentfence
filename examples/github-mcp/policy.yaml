@@ -1,0 +1,43 @@
+version: v1
+rules:
+  - name: allow-readonly-github-tools
+    action: allow
+    reason: read-only GitHub metadata access is allowed
+    match:
+      server: github-demo
+      tool: "repos/get"
+
+  - name: allow-list-pull-requests
+    action: allow
+    reason: pull request listing is allowed
+    match:
+      server: github-demo
+      tool: "pulls/list"
+
+  - name: require-approval-for-comments
+    action: require_approval
+    reason: writing GitHub comments requires human review
+    match:
+      server: github-demo
+      tool: "issues/comment"
+
+  - name: require-approval-for-merges
+    action: require_approval
+    reason: merging pull requests requires approval
+    match:
+      server: github-demo
+      tool: "pulls/merge"
+
+  - name: deny-repository-deletes
+    action: deny
+    reason: repository deletion is denied in the demo
+    match:
+      server: github-demo
+      tool: "repos/delete"
+
+  - name: deny-everything-else
+    action: deny
+    reason: all other GitHub MCP tools are denied by default in this demo
+    match:
+      server: github-demo
+      tool: "*"

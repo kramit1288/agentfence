@@ -1,6 +1,7 @@
 version: v1
-name: deny-shell
-description: Example policy placeholder for outright denied tools.
 rules:
-  - effect: deny
-    tool: shell.exec
+  - name: deny-shell-command
+    action: deny
+    reason: shell access is denied
+    match:
+      tool: "shell/*"
