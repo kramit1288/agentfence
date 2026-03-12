@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/agentfence/agentfence/internal/mcp/protocol"
 )
@@ -12,6 +13,25 @@ const (
 	NetworkHTTP  = "http"
 	NetworkStdio = "stdio"
 )
+
+type Outcome string
+
+const (
+	OutcomeSuccess        Outcome = "success"
+	OutcomeRPCError       Outcome = "rpc_error"
+	OutcomeHTTPError      Outcome = "http_error"
+	OutcomeTransportError Outcome = "transport_error"
+)
+
+// ForwardResult captures the outcome metadata for one upstream call.
+type ForwardResult struct {
+	Response       protocol.Response
+	HTTPStatusCode int
+	Latency        time.Duration
+	Outcome        Outcome
+	Target         string
+	Err            error
+}
 
 // Target describes how to reach an upstream MCP server.
 type Target struct {

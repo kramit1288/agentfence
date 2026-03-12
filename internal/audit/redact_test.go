@@ -6,115 +6,65 @@ import (
 	"time"
 
 	"github.com/agentfence/agentfence/internal/mcp/protocol"
+	"github.com/agentfence/agentfence/internal/mcp/transport"
 	"github.com/agentfence/agentfence/internal/policy"
 )
 
 func TestRedactMapMasksSensitiveKeysCaseInsensitive(t *testing.T) {
-	input := map[string]any{
-		"token":         "abc",
-		"Authorization": "Bearer abc",
-		"API_KEY":       "key-123",
-		"safe":          "value",
-	}
-
+	input := map[string]any{"token": "abc", "Authorization": "Bearer abc", "API_KEY": "key-123", "safe": "value"}
 	redacted := RedactMap(input)
-	if redacted["token"] != RedactedValue {
-		t.Fatalf("token = %v, want %q", redacted["token"], RedactedValue)
+	if redacted["token"] != RedactedValue || redacted["Authorization"] != RedactedValue || redacted["API_KEY"] != RedactedValue {
+		t.Fatalf("redacted = %#v, want sensitive fields masked", redacted)
 	}
-	if redacted["Authorization"] != RedactedValue {
-		t.Fatalf("Authorization = %v, want %q", redacted["Authorization"], RedactedValue)
-	}
-	if redacted["API_KEY"] != RedactedValue {
-		t.Fatalf("API_KEY = %v, want %q", redacted["API_KEY"], RedactedValue)
-	}
-	if redacted["safe"] != "value" {
-		t.Fatalf("safe = %v, want value", redacted["safe"])
-	}
-	if input["token"] != "abc" {
-		t.Fatal("RedactMap mutated input")
+	if redacted["safe"] != "value" || input["token"] != "abc" {
+		t.Fatalf("redacted = %#v input = %#v, want safe preserved and input untouched", redacted, input)
 	}
 }
 
 func TestRedactValueHandlesNestedMapsAndSlices(t *testing.T) {
-	input := map[string]any{
-		"config": map[string]any{
-			"password": "secret-pass",
-			"nested": []any{
-				map[string]any{"client_secret": "top-secret", "name": "svc"},
-				"ok",
-			},
-		},
-	}
-
+	input := map[string]any{"config": map[string]any{"password": "secret-pass", "nested": []any{map[string]any{"client_secret": "top-secret", "name": "svc"}, "ok"}}}
 	redacted := RedactMap(input)
-	config, ok := redacted["config"].(map[string]any)
-	if !ok {
-		t.Fatalf("config type = %T, want map[string]any", redacted["config"])
-	}
-	if config["password"] != RedactedValue {
-		t.Fatalf("password = %v, want %q", config["password"], RedactedValue)
-	}
-	items, ok := config["nested"].([]any)
-	if !ok {
-		t.Fatalf("nested type = %T, want []any", config["nested"])
-	}
-	first, ok := items[0].(map[string]any)
-	if !ok {
-		t.Fatalf("nested[0] type = %T, want map[string]any", items[0])
-	}
-	if first["client_secret"] != RedactedValue {
-		t.Fatalf("client_secret = %v, want %q", first["client_secret"], RedactedValue)
-	}
-	if first["name"] != "svc" {
-		t.Fatalf("name = %v, want svc", first["name"])
+	config := redacted["config"].(map[string]any)
+	items := config["nested"].([]any)
+	first := items[0].(map[string]any)
+	if config["password"] != RedactedValue || first["client_secret"] != RedactedValue || first["name"] != "svc" {
+		t.Fatalf("redacted = %#v, want nested redaction", redacted)
 	}
 }
 
 func TestRedactMapMatchesNormalizedSensitiveKeys(t *testing.T) {
-	input := map[string]any{
-		"x-authORIZATION-token": "abc",
-		"dbSecretValue":        "hidden",
-	}
-
+	input := map[string]any{"x-authORIZATION-token": "abc", "dbSecretValue": "hidden"}
 	redacted := RedactMap(input)
-	if redacted["x-authORIZATION-token"] != RedactedValue {
-		t.Fatalf("x-authORIZATION-token = %v, want %q", redacted["x-authORIZATION-token"], RedactedValue)
-	}
-	if redacted["dbSecretValue"] != RedactedValue {
-		t.Fatalf("dbSecretValue = %v, want %q", redacted["dbSecretValue"], RedactedValue)
+	if redacted["x-authORIZATION-token"] != RedactedValue || redacted["dbSecretValue"] != RedactedValue {
+		t.Fatalf("redacted = %#v, want normalized redaction", redacted)
 	}
 }
 
 func TestBuilderBuildPolicyDecisionRedactsArguments(t *testing.T) {
 	fixed := time.Date(2026, time.March, 12, 12, 0, 0, 0, time.UTC)
 	builder := Builder{now: func() time.Time { return fixed }}
-	request := protocol.Request{
-		JSONRPC: protocol.JSONRPCVersion,
-		ID:      idPtr(protocol.IntID(7)),
-		Method:  protocol.MethodToolsCall,
-	}
+	request := protocol.Request{JSONRPC: protocol.JSONRPCVersion, ID: idPtr(protocol.IntID(7)), Method: protocol.MethodToolsCall}
 	result := policy.Result{Action: policy.DecisionRequireApproval, Reason: "needs approval", RuleName: "approval-prod"}
 	args := map[string]any{"password": "secret", "env": "prod"}
-
 	event := builder.BuildPolicyDecision(request, "deployer", "deploy", args, result)
-	if event.Timestamp != fixed {
-		t.Fatalf("Timestamp = %v, want %v", event.Timestamp, fixed)
-	}
-	if event.Kind != EventKindPolicyDecision {
-		t.Fatalf("Kind = %q, want %q", event.Kind, EventKindPolicyDecision)
-	}
-	if event.Request.ID != "7" {
-		t.Fatalf("Request.ID = %q, want 7", event.Request.ID)
-	}
 	wantArgs := map[string]any{"password": RedactedValue, "env": "prod"}
-	if !reflect.DeepEqual(event.Request.Arguments, wantArgs) {
-		t.Fatalf("Arguments = %#v, want %#v", event.Request.Arguments, wantArgs)
-	}
-	if event.Decision.Allowed {
-		t.Fatal("Decision.Allowed = true, want false")
+	if event.Timestamp != fixed || event.Request.ID != "7" || !reflect.DeepEqual(event.Request.Arguments, wantArgs) || event.Decision.Allowed {
+		t.Fatalf("event = %#v, want redacted decision event", event)
 	}
 }
 
-func idPtr(id protocol.ID) *protocol.ID {
-	return &id
+func TestBuilderBuildUpstreamCall(t *testing.T) {
+	fixed := time.Date(2026, time.March, 12, 12, 1, 0, 0, time.UTC)
+	builder := Builder{now: func() time.Time { return fixed }}
+	request := protocol.Request{JSONRPC: protocol.JSONRPCVersion, ID: idPtr(protocol.StringID("req-1")), Method: protocol.MethodToolsCall}
+	result := transport.ForwardResult{HTTPStatusCode: 200, Latency: 25 * time.Millisecond, Outcome: transport.OutcomeSuccess, Target: "http://upstream"}
+	event := builder.BuildUpstreamCall(request, "deployer", "deploy", map[string]any{"api_key": "secret"}, result)
+	if event.Kind != EventKindUpstreamCall || event.Upstream.Target != "http://upstream" || event.Upstream.Outcome != string(transport.OutcomeSuccess) || event.Upstream.Forwarded != true {
+		t.Fatalf("event = %#v, want upstream call event", event)
+	}
+	if event.Request.Arguments["api_key"] != RedactedValue {
+		t.Fatalf("arguments = %#v, want redacted api_key", event.Request.Arguments)
+	}
 }
+
+func idPtr(id protocol.ID) *protocol.ID { return &id }
