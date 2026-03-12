@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -14,6 +15,16 @@ var sensitiveTokens = []string{
 	"apikey",
 	"authorization",
 }
+
+var inlineSecretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(token)\s*=\s*([^\s,;]+)`),
+	regexp.MustCompile(`(?i)\b(secret)\s*=\s*([^\s,;]+)`),
+	regexp.MustCompile(`(?i)\b(password)\s*=\s*([^\s,;]+)`),
+	regexp.MustCompile(`(?i)\b(api_?key)\s*=\s*([^\s,;]+)`),
+	regexp.MustCompile(`(?i)\b(authorization)\s*=\s*([^\s,;]+(?:\s+[^\s,;]+)?)`),
+}
+
+var urlUserInfoPattern = regexp.MustCompile(`(?i)(https?://)([^/@\s:]+:[^/@\s]+@)`)
 
 // RedactValue returns a copy of value with sensitive fields masked while
 // preserving the original structure where practical.
@@ -51,6 +62,15 @@ func RedactMap(input map[string]any) map[string]any {
 			continue
 		}
 		output[key] = RedactValue(value)
+	}
+	return output
+}
+
+// RedactText masks secret-looking key=value fragments in free-form text.
+func RedactText(input string) string {
+	output := urlUserInfoPattern.ReplaceAllString(input, `$1`+RedactedValue+`@`)
+	for _, pattern := range inlineSecretPatterns {
+		output = pattern.ReplaceAllString(output, `$1=`+RedactedValue)
 	}
 	return output
 }

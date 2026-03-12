@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/agentfence/agentfence/internal/approval"
 	"github.com/agentfence/agentfence/internal/config"
@@ -98,6 +99,9 @@ func resolveApproval(args []string, approve bool) error {
 	}
 	if flags.NArg() != 1 {
 		return errors.New("approval id is required")
+	}
+	if strings.TrimSpace(actor) == "" {
+		return errors.New("actor is required for approval resolution")
 	}
 	service, cleanup, err := approvalService(storePath)
 	if err != nil {

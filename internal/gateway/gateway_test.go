@@ -92,6 +92,39 @@ rules:
 	}
 }
 
+func TestGatewayUpstreamNon2xxJSONRPCBodyReturnsBadGateway(t *testing.T) {
+	engine := mustCompilePolicy(t, `
+version: v1
+rules:
+  - name: allow-deploy
+    action: allow
+    match:
+      server: deployer
+      tool: deploy
+`)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(protocol.Response{JSONRPC: protocol.JSONRPCVersion, ID: protocol.StringID("req-2b"), Error: &protocol.Error{Code: -32099, Message: "upstream failed"}})
+	}))
+	defer upstream.Close()
+	forwarder := mustHTTPForwarder(t, upstream.URL, time.Second)
+	auditSink := &recordingAuditSink{}
+	gateway := New(config.Default(), testLogger(), WithPolicyEvaluator(engine), WithForwarder(forwarder), WithAuditSink(auditSink))
+
+	response := performMCPRequest(t, gateway.Handler(), "deployer", "", `{"jsonrpc":"2.0","id":"req-2b","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"staging"}}}`)
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("StatusCode = %d, want %d", response.StatusCode, http.StatusBadGateway)
+	}
+	var payload protocol.Response
+	decodeBody(t, response, &payload)
+	if payload.Error == nil || payload.Error.Code != jsonRPCForwardingFailure {
+		t.Fatalf("Error = %+v, want forwarding failure", payload.Error)
+	}
+	if len(auditSink.events) != 2 || auditSink.events[1].Upstream.Outcome != string(transport.OutcomeHTTPError) {
+		t.Fatalf("audit events = %+v, want upstream http_error", auditSink.events)
+	}
+}
+
 func TestGatewayUpstreamTimeoutReturnsBadGateway(t *testing.T) {
 	engine := mustCompilePolicy(t, `
 version: v1
@@ -264,3 +297,4 @@ func (s *recordingAuditSink) Record(_ context.Context, event audit.Event) error 
 	s.events = append(s.events, event)
 	return nil
 }
+

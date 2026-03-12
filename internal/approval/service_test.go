@@ -100,6 +100,18 @@ func TestConflictingResolutionFails(t *testing.T) {
 	}
 }
 
+func TestMemoryRepositoryRejectsStaleConflictingUpdate(t *testing.T) {
+	repo := NewMemoryRepository()
+	request := Request{ID: "apr_1", Status: StatusApproved, Server: "deployer", Tool: "deploy", Method: "tools/call", Reason: "needs approval"}
+	if _, err := repo.Create(context.Background(), request); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	request.Status = StatusDenied
+	if _, err := repo.Update(context.Background(), request); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Update() error = %v, want ErrConflict", err)
+	}
+}
+
 func TestFileRepositoryPersistsPendingRequests(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "approvals.json")
 	repo := NewFileRepository(path)
@@ -122,6 +134,19 @@ func TestFileRepositoryPersistsPendingRequests(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].ID != request.ID {
 		t.Fatalf("pending = %+v, want created request", pending)
+	}
+}
+
+func TestFileRepositoryRejectsStaleConflictingUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approvals.json")
+	repo := NewFileRepository(path)
+	request := Request{ID: "apr_1", Status: StatusApproved, Server: "deployer", Tool: "deploy", Method: "tools/call", Reason: "needs approval"}
+	if _, err := repo.Create(context.Background(), request); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	request.Status = StatusDenied
+	if _, err := repo.Update(context.Background(), request); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Update() error = %v, want ErrConflict", err)
 	}
 }
 

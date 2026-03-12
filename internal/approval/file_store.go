@@ -74,8 +74,12 @@ func (r *FileRepository) Update(_ context.Context, request Request) (Request, er
 	if err != nil {
 		return Request{}, err
 	}
-	if _, ok := requests[request.ID]; !ok {
+	existing, ok := requests[request.ID]
+	if !ok {
 		return Request{}, ErrNotFound
+	}
+	if existing.Status != StatusPending && existing.Status != request.Status {
+		return Request{}, ErrConflict
 	}
 	requests[request.ID] = request
 	if err := r.save(requests); err != nil {

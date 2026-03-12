@@ -1,7 +1,9 @@
 package audit
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +42,25 @@ func TestRedactMapMatchesNormalizedSensitiveKeys(t *testing.T) {
 	}
 }
 
+func TestRedactTextMasksInlineSecrets(t *testing.T) {
+	input := "token=abc authorization=Bearer foo api_key=bar password=hunter2"
+	redacted := RedactText(input)
+	if strings.Contains(redacted, "abc") || strings.Contains(redacted, "Bearer foo") || strings.Contains(redacted, "bar") || strings.Contains(redacted, "hunter2") {
+		t.Fatalf("RedactText() = %q, want masked secrets", redacted)
+	}
+}
+
+func TestRedactTextMasksURLUserInfo(t *testing.T) {
+	input := "call upstream: Post \"http://user:secret@example.com/mcp?token=abc\""
+	redacted := RedactText(input)
+	if strings.Contains(redacted, "user:secret") || strings.Contains(redacted, "token=abc") {
+		t.Fatalf("RedactText() = %q, want URL secrets masked", redacted)
+	}
+	if !strings.Contains(redacted, RedactedValue) {
+		t.Fatalf("RedactText() = %q, want redaction marker", redacted)
+	}
+}
+
 func TestBuilderBuildPolicyDecisionRedactsArguments(t *testing.T) {
 	fixed := time.Date(2026, time.March, 12, 12, 0, 0, 0, time.UTC)
 	builder := Builder{now: func() time.Time { return fixed }}
@@ -64,6 +85,19 @@ func TestBuilderBuildUpstreamCall(t *testing.T) {
 	}
 	if event.Request.Arguments["api_key"] != RedactedValue {
 		t.Fatalf("arguments = %#v, want redacted api_key", event.Request.Arguments)
+	}
+}
+
+func TestBuilderBuildUpstreamCallRedactsErrorText(t *testing.T) {
+	builder := Builder{now: func() time.Time { return time.Date(2026, time.March, 12, 12, 1, 0, 0, time.UTC) }}
+	request := protocol.Request{JSONRPC: protocol.JSONRPCVersion, ID: idPtr(protocol.StringID("req-2")), Method: protocol.MethodToolsCall}
+	result := transport.ForwardResult{Outcome: transport.OutcomeTransportError, Target: "http://example.com", Err: errors.New("authorization=Bearer abc token=secret")}
+	event := builder.BuildUpstreamCall(request, "deployer", "deploy", nil, result)
+	if strings.Contains(event.Upstream.Error, "abc") || strings.Contains(event.Upstream.Error, "secret") {
+		t.Fatalf("event.Upstream.Error = %q, want redacted error text", event.Upstream.Error)
+	}
+	if !strings.Contains(event.Upstream.Error, RedactedValue) {
+		t.Fatalf("event.Upstream.Error = %q, want redaction marker", event.Upstream.Error)
 	}
 }
 

@@ -62,6 +62,35 @@ func TestHTTPForwarderUpstreamDecodeError(t *testing.T) {
 	}
 }
 
+func TestHTTPForwarderRejectsNon2xxEvenWithJSONRPCBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(protocol.Response{
+			JSONRPC: protocol.JSONRPCVersion,
+			ID:      protocol.StringID("req-1"),
+			Error:   &protocol.Error{Code: -32099, Message: "upstream failed"},
+		})
+	}))
+	defer upstream.Close()
+
+	forwarder := mustHTTPForwarder(t, upstream.URL, &http.Client{Timeout: time.Second})
+	result, err := forwarder.Forward(context.Background(), "deployer", protocol.Request{
+		JSONRPC: protocol.JSONRPCVersion,
+		ID:      idPtr(protocol.StringID("req-1")),
+		Method:  protocol.MethodToolsCall,
+		Params:  mustMarshal(map[string]any{"name": "deploy"}),
+	})
+	if err == nil {
+		t.Fatal("Forward() error = nil, want error")
+	}
+	if result.Outcome != OutcomeHTTPError {
+		t.Fatalf("Outcome = %q, want %q", result.Outcome, OutcomeHTTPError)
+	}
+	if result.HTTPStatusCode != http.StatusBadGateway {
+		t.Fatalf("HTTPStatusCode = %d, want %d", result.HTTPStatusCode, http.StatusBadGateway)
+	}
+}
+
 func TestHTTPForwarderTimeout(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
@@ -85,6 +114,13 @@ func TestHTTPForwarderTimeout(t *testing.T) {
 	}
 	if result.Outcome != OutcomeTransportError {
 		t.Fatalf("Outcome = %q, want %q", result.Outcome, OutcomeTransportError)
+	}
+}
+
+func TestSanitizeAddressRemovesCredentialsAndQuery(t *testing.T) {
+	got := sanitizeAddress("http://user:secret@example.com/mcp?token=abc#frag")
+	if got != "http://example.com/mcp" {
+		t.Fatalf("sanitizeAddress() = %q, want %q", got, "http://example.com/mcp")
 	}
 }
 

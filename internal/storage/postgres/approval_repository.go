@@ -83,8 +83,8 @@ func (r *ApprovalRepository) Update(ctx context.Context, request approval.Reques
 		UPDATE approval_requests
 		SET status = $2, reason = $3, rule_name = $4, request_id = $5, arguments = $6,
 			created_at = $7, created_by = $8, resolved_at = $9, resolved_by = $10, resolution = $11
-		WHERE id = $1
-	`, request.ID, request.Status, request.Reason, nullString(request.RuleName), nullString(request.RequestID), arguments, request.CreatedAt, nullString(request.CreatedBy), request.ResolvedAt, nullString(request.ResolvedBy), nullString(request.Resolution))
+		WHERE id = $1 AND (status = $12 OR status = $2)
+	`, request.ID, request.Status, request.Reason, nullString(request.RuleName), nullString(request.RequestID), arguments, request.CreatedAt, nullString(request.CreatedBy), request.ResolvedAt, nullString(request.ResolvedBy), nullString(request.Resolution), approval.StatusPending)
 	if err != nil {
 		return approval.Request{}, fmt.Errorf("update approval request: %w", err)
 	}
@@ -93,7 +93,14 @@ func (r *ApprovalRepository) Update(ctx context.Context, request approval.Reques
 		return approval.Request{}, fmt.Errorf("approval rows affected: %w", err)
 	}
 	if affected == 0 {
-		return approval.Request{}, approval.ErrNotFound
+		existing, getErr := r.Get(ctx, request.ID)
+		if getErr == nil && existing.Status != request.Status {
+			return approval.Request{}, approval.ErrConflict
+		}
+		if getErr != nil {
+			return approval.Request{}, getErr
+		}
+		return request, nil
 	}
 	return request, nil
 }

@@ -47,7 +47,7 @@ func (b Builder) BuildUpstreamCall(request protocol.Request, server string, tool
 	}
 	errText := ""
 	if result.Err != nil {
-		errText = result.Err.Error()
+		errText = RedactText(result.Err.Error())
 	}
 	return Event{
 		Timestamp: b.now(),

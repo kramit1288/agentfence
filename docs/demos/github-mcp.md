@@ -76,7 +76,7 @@ List the pending approvals:
 go run ./cmd/agentfence-cli list-approvals --store data/demo-approvals.json
 ```
 
-Approve or deny by ID:
+Approve or deny by ID. The CLI now requires an explicit `--actor` value for approval auditability:
 
 ```powershell
 go run ./cmd/agentfence-cli approve <approval-id> --store data/demo-approvals.json --actor reviewer --reason "demo approved"

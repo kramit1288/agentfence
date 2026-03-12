@@ -224,8 +224,12 @@ func (r *MemoryRepository) ListPending(_ context.Context) ([]Request, error) {
 func (r *MemoryRepository) Update(_ context.Context, request Request) (Request, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.requests[request.ID]; !ok {
+	existing, ok := r.requests[request.ID]
+	if !ok {
 		return Request{}, ErrNotFound
+	}
+	if existing.Status != StatusPending && existing.Status != request.Status {
+		return Request{}, ErrConflict
 	}
 	r.requests[request.ID] = request
 	return request, nil

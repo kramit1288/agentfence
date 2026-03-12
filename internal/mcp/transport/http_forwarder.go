@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/agentfence/agentfence/internal/mcp/protocol"
@@ -31,14 +32,15 @@ func NewHTTPForwarder(target Target, client *http.Client) (*HTTPForwarder, error
 
 func (f *HTTPForwarder) Forward(ctx context.Context, server string, request protocol.Request) (ForwardResult, error) {
 	started := time.Now()
+	target := sanitizeAddress(f.target.Address)
 	raw, err := json.Marshal(request)
 	if err != nil {
-		return ForwardResult{Latency: time.Since(started), Outcome: OutcomeTransportError, Target: f.target.Address, Err: err}, fmt.Errorf("encode upstream request: %w", err)
+		return ForwardResult{Latency: time.Since(started), Outcome: OutcomeTransportError, Target: target, Err: err}, fmt.Errorf("encode upstream request: %w", err)
 	}
 
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, f.target.Address, bytes.NewReader(raw))
 	if err != nil {
-		return ForwardResult{Latency: time.Since(started), Outcome: OutcomeTransportError, Target: f.target.Address, Err: err}, fmt.Errorf("build upstream request: %w", err)
+		return ForwardResult{Latency: time.Since(started), Outcome: OutcomeTransportError, Target: target, Err: err}, fmt.Errorf("build upstream request: %w", err)
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	if server != "" {
@@ -51,21 +53,33 @@ func (f *HTTPForwarder) Forward(ctx context.Context, server string, request prot
 	httpResponse, err := f.client.Do(httpRequest)
 	latency := time.Since(started)
 	if err != nil {
-		result := ForwardResult{Latency: latency, Outcome: OutcomeTransportError, Target: f.target.Address, Err: err}
+		result := ForwardResult{Latency: latency, Outcome: OutcomeTransportError, Target: target, Err: err}
 		return result, fmt.Errorf("call upstream: %w", err)
 	}
 	defer httpResponse.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(httpResponse.Body, 1<<20))
 	if err != nil {
-		result := ForwardResult{Latency: latency, Outcome: OutcomeTransportError, Target: f.target.Address, HTTPStatusCode: httpResponse.StatusCode, Err: err}
+		result := ForwardResult{Latency: latency, Outcome: OutcomeTransportError, Target: target, HTTPStatusCode: httpResponse.StatusCode, Err: err}
 		return result, fmt.Errorf("read upstream response: %w", err)
 	}
 
 	response, err := protocol.DecodeResponse(body)
 	if err != nil {
-		result := ForwardResult{Latency: latency, Outcome: OutcomeHTTPError, Target: f.target.Address, HTTPStatusCode: httpResponse.StatusCode, Err: err}
+		result := ForwardResult{Latency: latency, Outcome: OutcomeHTTPError, Target: target, HTTPStatusCode: httpResponse.StatusCode, Err: err}
 		return result, fmt.Errorf("decode upstream response: %w", err)
+	}
+	if httpResponse.StatusCode < http.StatusOK || httpResponse.StatusCode >= http.StatusMultipleChoices {
+		err = fmt.Errorf("upstream returned HTTP %d", httpResponse.StatusCode)
+		result := ForwardResult{
+			Response:       response,
+			HTTPStatusCode: httpResponse.StatusCode,
+			Latency:        latency,
+			Outcome:        OutcomeHTTPError,
+			Target:         target,
+			Err:            err,
+		}
+		return result, err
 	}
 
 	outcome := OutcomeSuccess
@@ -78,7 +92,18 @@ func (f *HTTPForwarder) Forward(ctx context.Context, server string, request prot
 		HTTPStatusCode: httpResponse.StatusCode,
 		Latency:        latency,
 		Outcome:        outcome,
-		Target:         f.target.Address,
+		Target:         target,
 	}
 	return result, nil
+}
+
+func sanitizeAddress(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
