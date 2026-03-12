@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security reporting guidance
+    url: https://github.com/agentfence/agentfence
+    about: Do not post raw secrets, credentials, or exploit details in public issues.

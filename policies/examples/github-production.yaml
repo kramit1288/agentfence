@@ -1,0 +1,43 @@
+version: v1
+rules:
+  - name: allow-github-read-repo
+    action: allow
+    reason: repository metadata reads are allowed
+    match:
+      server: github-*
+      tool: "repos/get"
+
+  - name: allow-github-list-pulls
+    action: allow
+    reason: pull request listing is allowed
+    match:
+      server: github-*
+      tool: "pulls/list"
+
+  - name: require-approval-for-comments
+    action: require_approval
+    reason: creating GitHub comments requires review
+    match:
+      server: github-*
+      tool: "issues/comment"
+
+  - name: require-approval-for-merges
+    action: require_approval
+    reason: merging pull requests requires review
+    match:
+      server: github-*
+      tool: "pulls/merge"
+
+  - name: deny-destructive-repo-actions
+    action: deny
+    reason: destructive repository actions are denied
+    match:
+      server: github-*
+      tool: "repos/delete"
+
+  - name: deny-github-catch-all
+    action: deny
+    reason: all other GitHub tools are denied until reviewed
+    match:
+      server: github-*
+      tool: "*"

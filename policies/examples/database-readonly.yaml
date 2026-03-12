@@ -1,0 +1,36 @@
+version: v1
+rules:
+  - name: allow-safe-reads
+    action: allow
+    reason: read-only database access is allowed
+    match:
+      server: db-*
+      tool: "query/select"
+
+  - name: allow-list-schemas
+    action: allow
+    reason: schema introspection is allowed
+    match:
+      server: db-*
+      tool: "schema/list"
+
+  - name: require-approval-for-migrations
+    action: require_approval
+    reason: schema changes require operator approval
+    match:
+      server: db-*
+      tool: "schema/migrate"
+
+  - name: deny-destructive-db-actions
+    action: deny
+    reason: destructive database actions are denied
+    match:
+      server: db-*
+      tool: "query/drop"
+
+  - name: deny-db-catch-all
+    action: deny
+    reason: all other database tools are denied until explicitly reviewed
+    match:
+      server: db-*
+      tool: "*"
