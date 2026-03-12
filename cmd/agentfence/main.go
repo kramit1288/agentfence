@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/agentfence/agentfence/internal/approval"
 	"github.com/agentfence/agentfence/internal/config"
 	"github.com/agentfence/agentfence/internal/gateway"
 	"github.com/agentfence/agentfence/internal/telemetry"
@@ -37,10 +38,18 @@ func run() error {
 	}
 
 	logger := telemetry.NewLogger(cfg.Log)
-	app := gateway.New(cfg, logger)
+	approvalService := approval.NewService(approval.NewFileRepository(approvalStorePath()))
+	app := gateway.New(cfg, logger, gateway.WithApprovalManager(approvalService))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	return app.Run(ctx)
+}
+
+func approvalStorePath() string {
+	if path := os.Getenv("AGENTFENCE_APPROVAL_STORE"); path != "" {
+		return path
+	}
+	return "data/approvals.json"
 }

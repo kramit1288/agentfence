@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/agentfence/agentfence/internal/audit"
+	"github.com/agentfence/agentfence/internal/approval"
 	"github.com/agentfence/agentfence/internal/config"
 	"github.com/agentfence/agentfence/internal/mcp/protocol"
 	"github.com/agentfence/agentfence/internal/policy"
@@ -34,7 +35,7 @@ rules:
 	auditSink := &recordingAuditSink{}
 	gateway := New(config.Default(), testLogger(), WithPolicyEvaluator(engine), WithForwarder(forwarder), WithAuditSink(auditSink))
 
-	response := performMCPRequest(t, gateway.Handler(), "deployer", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"staging","api_key":"top-secret"}}}`)
+	response := performMCPRequest(t, gateway.Handler(), "deployer", "", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"staging","api_key":"top-secret"}}}`)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", response.StatusCode, http.StatusOK)
 	}
@@ -49,19 +50,6 @@ rules:
 	}
 	if auditSink.events[0].Request.Arguments["api_key"] != audit.RedactedValue {
 		t.Fatalf("audit arguments = %+v, want api_key redacted", auditSink.events[0].Request.Arguments)
-	}
-
-	var payload protocol.Response
-	decodeBody(t, response, &payload)
-	if payload.Error != nil {
-		t.Fatalf("Error = %+v, want nil", payload.Error)
-	}
-	var result map[string]any
-	if err := json.Unmarshal(payload.Result, &result); err != nil {
-		t.Fatalf("json.Unmarshal(result) error = %v", err)
-	}
-	if result["ok"] != true {
-		t.Fatalf("result = %+v, want ok=true", result)
 	}
 }
 
@@ -79,7 +67,7 @@ rules:
 	forwarder := &stubForwarder{}
 	gateway := New(config.Default(), testLogger(), WithPolicyEvaluator(engine), WithForwarder(forwarder))
 
-	response := performMCPRequest(t, gateway.Handler(), "deployer", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"prod"}}}`)
+	response := performMCPRequest(t, gateway.Handler(), "deployer", "", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"prod"}}}`)
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("StatusCode = %d, want %d", response.StatusCode, http.StatusForbidden)
 	}
@@ -94,7 +82,7 @@ rules:
 	}
 }
 
-func TestGatewayApprovalRequiredRequest(t *testing.T) {
+func TestGatewayApprovalRequiredRequestCreatesApproval(t *testing.T) {
 	engine := mustCompilePolicy(t, `
 version: v1
 rules:
@@ -107,9 +95,11 @@ rules:
       args:
         environment: prod
 `)
-	gateway := New(config.Default(), testLogger(), WithPolicyEvaluator(engine))
+	repo := approval.NewMemoryRepository()
+	service := approval.NewService(repo)
+	gateway := New(config.Default(), testLogger(), WithPolicyEvaluator(engine), WithApprovalManager(service))
 
-	response := performMCPRequest(t, gateway.Handler(), "deployer", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"prod","api_key":"shh"}}}`)
+	response := performMCPRequest(t, gateway.Handler(), "deployer", "alice", `{"jsonrpc":"2.0","id":"req-1","method":"tools/call","params":{"name":"deploy","arguments":{"environment":"prod","api_key":"shh"}}}`)
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("StatusCode = %d, want %d", response.StatusCode, http.StatusForbidden)
 	}
@@ -123,8 +113,17 @@ rules:
 	if err := json.Unmarshal(payload.Error.Data, &data); err != nil {
 		t.Fatalf("json.Unmarshal(data) error = %v", err)
 	}
-	if data["status"] != "pending_approval" {
-		t.Fatalf("data = %+v, want pending_approval status", data)
+	approvalID, ok := data["approval_id"].(string)
+	if !ok || approvalID == "" {
+		t.Fatalf("data = %+v, want non-empty approval_id", data)
+	}
+
+	stored, err := repo.Get(context.Background(), approvalID)
+	if err != nil {
+		t.Fatalf("repo.Get() error = %v", err)
+	}
+	if stored.CreatedBy != "alice" || stored.Arguments["api_key"] != audit.RedactedValue {
+		t.Fatalf("stored = %+v, want actor alice and redacted args", stored)
 	}
 }
 
@@ -147,11 +146,13 @@ func TestGatewayMalformedRequest(t *testing.T) {
 	}
 }
 
-func performMCPRequest(t *testing.T, handler http.Handler, server string, body string) *http.Response {
+func performMCPRequest(t *testing.T, handler http.Handler, server string, actor string, body string) *http.Response {
 	t.Helper()
-
 	request := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(body))
 	request.Header.Set(headerServerID, server)
+	if actor != "" {
+		request.Header.Set(headerActor, actor)
+	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response.Result()

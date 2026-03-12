@@ -11,20 +11,25 @@ import (
 
 	"github.com/agentfence/agentfence/internal/api"
 	"github.com/agentfence/agentfence/internal/audit"
+	"github.com/agentfence/agentfence/internal/approval"
 	"github.com/agentfence/agentfence/internal/config"
 	"github.com/agentfence/agentfence/internal/mcp/protocol"
 	"github.com/agentfence/agentfence/internal/policy"
 )
 
-const headerServerID = "X-AgentFence-Server"
+const (
+	headerServerID = "X-AgentFence-Server"
+	headerActor    = "X-AgentFence-Actor"
+)
 
 const (
-	jsonRPCParseError       int64 = -32700
-	jsonRPCInvalidRequest   int64 = -32600
-	jsonRPCPolicyDenied     int64 = -32001
-	jsonRPCApprovalRequired int64 = -32002
-	jsonRPCForwardingStub   int64 = -32003
-	jsonRPCAuditFailure     int64 = -32004
+	jsonRPCParseError         int64 = -32700
+	jsonRPCInvalidRequest     int64 = -32600
+	jsonRPCPolicyDenied       int64 = -32001
+	jsonRPCApprovalRequired   int64 = -32002
+	jsonRPCForwardingStub     int64 = -32003
+	jsonRPCAuditFailure       int64 = -32004
+	jsonRPCApprovalUnavailable int64 = -32005
 )
 
 // PolicyEvaluator captures the portion of the policy engine used by the gateway.
@@ -37,11 +42,17 @@ type Forwarder interface {
 	Forward(ctx context.Context, server string, request protocol.Request) (protocol.Response, error)
 }
 
+// ApprovalManager captures the approval workflow behavior used by the gateway.
+type ApprovalManager interface {
+	Create(ctx context.Context, input approval.CreateInput) (approval.Request, error)
+}
+
 // Gateway is the top-level runtime for the HTTP gateway process.
 type Gateway struct {
 	cfg       config.Config
 	logger    *slog.Logger
 	policy    PolicyEvaluator
+	approvals ApprovalManager
 	forwarder Forwarder
 	auditSink audit.Sink
 	builder   audit.Builder
@@ -51,28 +62,22 @@ type Gateway struct {
 // Option customizes the gateway runtime.
 type Option func(*Gateway)
 
-// WithPolicyEvaluator sets the policy evaluator for MCP requests.
 func WithPolicyEvaluator(evaluator PolicyEvaluator) Option {
-	return func(g *Gateway) {
-		g.policy = evaluator
-	}
+	return func(g *Gateway) { g.policy = evaluator }
 }
 
-// WithForwarder sets the upstream forwarder for allowed requests.
+func WithApprovalManager(manager ApprovalManager) Option {
+	return func(g *Gateway) { g.approvals = manager }
+}
+
 func WithForwarder(forwarder Forwarder) Option {
-	return func(g *Gateway) {
-		g.forwarder = forwarder
-	}
+	return func(g *Gateway) { g.forwarder = forwarder }
 }
 
-// WithAuditSink sets the audit sink for decision events.
 func WithAuditSink(sink audit.Sink) Option {
-	return func(g *Gateway) {
-		g.auditSink = sink
-	}
+	return func(g *Gateway) { g.auditSink = sink }
 }
 
-// New constructs a Gateway with explicit configuration.
 func New(cfg config.Config, logger *slog.Logger, opts ...Option) *Gateway {
 	gateway := &Gateway{
 		cfg:     cfg,
@@ -96,17 +101,14 @@ func New(cfg config.Config, logger *slog.Logger, opts ...Option) *Gateway {
 	return gateway
 }
 
-// Handler returns the MCP HTTP handler used by the server and tests.
 func (g *Gateway) Handler() http.Handler {
 	return http.HandlerFunc(g.handleMCP)
 }
 
-// ListenAddr returns the configured bind address for the gateway process.
 func (g *Gateway) ListenAddr() string {
 	return g.cfg.HTTP.Address
 }
 
-// Run starts the HTTP server and shuts it down when the context is canceled.
 func (g *Gateway) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
@@ -139,7 +141,6 @@ func (g *Gateway) Run(ctx context.Context) error {
 	}
 }
 
-// Shutdown gracefully stops the HTTP server.
 func (g *Gateway) Shutdown(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, g.cfg.HTTP.ShutdownTimeout)
 	defer cancel()
@@ -196,14 +197,7 @@ func (g *Gateway) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case policy.DecisionAllow:
 		g.handleAllowed(w, r, request, metadata, decision)
 	case policy.DecisionRequireApproval:
-		g.writeJSONRPCError(w, http.StatusForbidden, request.ID, jsonRPCApprovalRequired, "request requires approval", map[string]any{
-			"status":    "pending_approval",
-			"reason":    decision.Reason,
-			"rule":      decision.RuleName,
-			"server":    metadata.Server,
-			"tool":      metadata.Tool,
-			"forwarded": false,
-		})
+		g.handleApprovalRequired(w, r, request, metadata, decision)
 	default:
 		g.writeJSONRPCError(w, http.StatusForbidden, request.ID, jsonRPCPolicyDenied, "request denied by policy", map[string]any{
 			"reason": decision.Reason,
@@ -218,6 +212,7 @@ type requestMetadata struct {
 	Server string
 	Tool   string
 	Args   map[string]any
+	Actor  string
 }
 
 func extractMetadata(r *http.Request, request protocol.Request) (requestMetadata, error) {
@@ -229,6 +224,8 @@ func extractMetadata(r *http.Request, request protocol.Request) (requestMetadata
 		return requestMetadata{}, errors.New("server identifier is required via X-AgentFence-Server header or server query parameter")
 	}
 
+	actor := r.Header.Get(headerActor)
+
 	switch request.Method {
 	case protocol.MethodToolsCall:
 		params, err := protocol.DecodeToolsCallParams(request.Params)
@@ -239,9 +236,9 @@ func extractMetadata(r *http.Request, request protocol.Request) (requestMetadata
 		if err != nil {
 			return requestMetadata{}, err
 		}
-		return requestMetadata{Server: server, Tool: params.Name, Args: args}, nil
+		return requestMetadata{Server: server, Tool: params.Name, Args: args, Actor: actor}, nil
 	case protocol.MethodToolsList:
-		return requestMetadata{Server: server, Tool: protocol.MethodToolsList, Args: map[string]any{}}, nil
+		return requestMetadata{Server: server, Tool: protocol.MethodToolsList, Args: map[string]any{}, Actor: actor}, nil
 	default:
 		return requestMetadata{}, fmt.Errorf("unsupported MCP method %q", request.Method)
 	}
@@ -265,11 +262,7 @@ func (g *Gateway) evaluatePolicy(metadata requestMetadata) policy.Result {
 	if g.policy == nil {
 		return policy.Result{Action: policy.DecisionDeny, Reason: "policy engine not configured; deny by default"}
 	}
-	return g.policy.Evaluate(policy.Input{
-		Server: metadata.Server,
-		Tool:   metadata.Tool,
-		Args:   metadata.Args,
-	})
+	return g.policy.Evaluate(policy.Input{Server: metadata.Server, Tool: metadata.Tool, Args: metadata.Args})
 }
 
 func (g *Gateway) recordAudit(ctx context.Context, event audit.Event) error {
@@ -277,6 +270,40 @@ func (g *Gateway) recordAudit(ctx context.Context, event audit.Event) error {
 		return nil
 	}
 	return g.auditSink.Record(ctx, event)
+}
+
+func (g *Gateway) handleApprovalRequired(w http.ResponseWriter, r *http.Request, request protocol.Request, metadata requestMetadata, decision policy.Result) {
+	if g.approvals == nil {
+		g.writeJSONRPCError(w, http.StatusInternalServerError, request.ID, jsonRPCApprovalUnavailable, "approval workflow unavailable", map[string]any{
+			"reason": "approval service not configured",
+		})
+		return
+	}
+
+	approvalRequest, err := g.approvals.Create(r.Context(), approval.CreateInput{
+		Server:    metadata.Server,
+		Tool:      metadata.Tool,
+		Method:    request.Method,
+		Reason:    decision.Reason,
+		RuleName:  decision.RuleName,
+		RequestID: eventRequestID(request.ID),
+		Arguments: audit.RedactMap(metadata.Args),
+		Actor:     metadata.Actor,
+	})
+	if err != nil {
+		g.writeJSONRPCError(w, http.StatusInternalServerError, request.ID, jsonRPCApprovalUnavailable, "failed to create approval request", map[string]any{"reason": err.Error()})
+		return
+	}
+
+	g.writeJSONRPCError(w, http.StatusForbidden, request.ID, jsonRPCApprovalRequired, "request requires approval", map[string]any{
+		"status":      string(approvalRequest.Status),
+		"approval_id": approvalRequest.ID,
+		"reason":      decision.Reason,
+		"rule":        decision.RuleName,
+		"server":      metadata.Server,
+		"tool":        metadata.Tool,
+		"forwarded":   false,
+	})
 }
 
 func (g *Gateway) handleAllowed(w http.ResponseWriter, r *http.Request, request protocol.Request, metadata requestMetadata, decision policy.Result) {
@@ -314,19 +341,10 @@ func (g *Gateway) writeJSONRPCError(w http.ResponseWriter, status int, id *proto
 	if id != nil {
 		responseID = *id
 	}
-
-	response := protocol.Response{
-		JSONRPC: protocol.JSONRPCVersion,
-		ID:      responseID,
-		Error: &protocol.Error{
-			Code:    code,
-			Message: message,
-		},
-	}
+	response := protocol.Response{JSONRPC: protocol.JSONRPCVersion, ID: responseID, Error: &protocol.Error{Code: code, Message: message}}
 	if data != nil {
 		response.Error.Data = mustMarshal(data)
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(response)
@@ -338,4 +356,17 @@ func mustMarshal(value any) json.RawMessage {
 		panic(err)
 	}
 	return encoded
+}
+
+func eventRequestID(id *protocol.ID) string {
+	if id == nil {
+		return ""
+	}
+	if value, ok := id.StringValue(); ok {
+		return value
+	}
+	if value, ok := id.IntValue(); ok {
+		return fmt.Sprintf("%d", value)
+	}
+	return ""
 }
