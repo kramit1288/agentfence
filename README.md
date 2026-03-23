@@ -1,6 +1,6 @@
 # AgentFence
 
-AgentFence is a gateway for securing, governing, and auditing MCP tool access.
+AgentFence is an open-source gateway for securing, governing, and auditing MCP tool access in production agent systems.
 
 It sits between an agent runtime and one or more upstream MCP servers, evaluates policy before a tool call is forwarded, records redacted audit events, and supports approval workflows for risky actions.
 
@@ -17,7 +17,7 @@ The repository already includes a usable v0.1 foundation:
 - a minimal Next.js admin UI
 - a runnable GitHub MCP demo flow
 
-This is still an early OSS release. The project is credible for local evaluation and staging-style demos, but not yet a complete production control plane.
+This is an early OSS technical preview. AgentFence is suitable for local evaluation and staging-style demos, but it is not yet a complete production control plane.
 
 ## Why AgentFence
 
@@ -139,5 +139,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0
+By contributing to AgentFence, you agree that your contributions will be licensed under the repository’s Apache-2.0 license.
 

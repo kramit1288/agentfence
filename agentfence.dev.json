@@ -1,0 +1,8 @@
+{
+  "listen_addr": ":8080",
+  "upstream_url": "http://localhost:8081/mcp",
+  "upstream_timeout": "10s",
+  "approval_store": ".local/data/approvals.json",
+  "audit_store": ".local/data/audit.json",
+  "policy_file": "policies/examples/github-readonly.yaml"
+}
