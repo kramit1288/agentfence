@@ -130,6 +130,7 @@ The first OSS release still has real limitations:
 - there is no generated `go.sum` in this repository snapshot yet
 - web dependency lockfiles are not committed yet
 - validation in this environment could not be completed because the Go toolchain is unavailable on `PATH`
+- multi agent is not part of V1
 
 Those gaps are intentional to call out before broader adoption.
 
