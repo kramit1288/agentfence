@@ -23,4 +23,7 @@ web/out/
 # Logs
 *.log
 
+agentfence.dev.json
+.local/
+
 AGENTS.md

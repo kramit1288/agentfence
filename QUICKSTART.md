@@ -31,23 +31,39 @@ The quickest local setup uses:
 ```bash
 git clone https://github.com/<your-username>/agentfence.git
 cd agentfence
-2. Install web dependencies
+```
+
+## 2. Install web dependencies
+
+```bash
 cd web
 npm install
 cd ..
-3. Create local working directories
+```
+
+## 3. Create local working directories
+
+Create `.local/data` if it does not already exist.
+
+```bash
 mkdir -p .local
 mkdir -p .local/data
+```
 
 On Windows PowerShell:
 
+```powershell
 New-Item -ItemType Directory -Force .local | Out-Null
 New-Item -ItemType Directory -Force .local\data | Out-Null
-4. Start the mock GitHub MCP server
+```
+
+## 4. Start the mock GitHub MCP server
 
 This repo includes a demo upstream MCP server for local evaluation.
 
+```bash
 go run ./cmd/mock-github-mcp
+```
 
 By default, keep it running in a separate terminal.
 
@@ -57,31 +73,68 @@ http://localhost:8081/mcp
 
 If your mock server runs on a different port, adjust the config values accordingly.
 
-5. Create a local config file
+## 5. Create a local config file
 
-Create agentfence.dev.json in the repository root:
+Copy the checked-in example file in the repository root:
 
+```bash
+cp agentfence.dev.example.json agentfence.dev.json
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item agentfence.dev.example.json agentfence.dev.json
+```
+
+The example file uses the current local development shape:
+
+```json
 {
   "listen_addr": ":8080",
   "upstream_url": "http://localhost:8081/mcp",
   "upstream_timeout": "10s",
   "approval_store": ".local/data/approvals.json",
   "audit_store": ".local/data/audit.json",
-  "policy_file": "policies/examples/github-readonly.yaml"
+  "policy_file": "policies/examples/github-production.yaml"
 }
-6. Set environment variables
+```
+
+Adjust the copied file if your local upstream URL, ports, or file paths differ.
+
+## 6. Set environment variables
+
+The gateway currently reads the upstream, policy, audit, and approval settings from environment variables. Keep `agentfence.dev.json` as your local reference file and export matching values before you start the gateway.
 
 Linux/macOS:
 
-export AGENTFENCE_CONFIG_FILE=agentfence.dev.json
+```bash
+export AGENTFENCE_HTTP_ADDRESS=:8080
+export AGENTFENCE_UPSTREAM_URL=http://localhost:8081/mcp
+export AGENTFENCE_UPSTREAM_TIMEOUT=10s
+export AGENTFENCE_APPROVAL_STORE=.local/data/approvals.json
+export AGENTFENCE_AUDIT_STORE=.local/data/audit.json
+export AGENTFENCE_POLICY_FILE=policies/examples/github-production.yaml
 export AGENTFENCE_API_BASE=http://localhost:8080
+```
 
 Windows PowerShell:
 
-$env:AGENTFENCE_CONFIG_FILE="agentfence.dev.json"
+```powershell
+$env:AGENTFENCE_HTTP_ADDRESS=":8080"
+$env:AGENTFENCE_UPSTREAM_URL="http://localhost:8081/mcp"
+$env:AGENTFENCE_UPSTREAM_TIMEOUT="10s"
+$env:AGENTFENCE_APPROVAL_STORE=".local/data/approvals.json"
+$env:AGENTFENCE_AUDIT_STORE=".local/data/audit.json"
+$env:AGENTFENCE_POLICY_FILE="policies/examples/github-production.yaml"
 $env:AGENTFENCE_API_BASE="http://localhost:8080"
-7. Start the gateway
+```
+
+## 7. Start the gateway
+
+```bash
 go run ./cmd/agentfence
+```
 
 The gateway should now be listening on:
 
@@ -97,30 +150,35 @@ approvals admin API
 
 audit admin API
 
-8. Start the admin UI
+## 8. Start the admin UI
 
 In a separate terminal:
 
+```bash
 cd web
 npm run dev
+```
 
 The UI should now be available at:
 
 http://localhost:3000
-9. Run the operator CLI
+
+## 9. Run the operator CLI
 
 You can inspect or resolve approval requests with the CLI.
 
 Examples:
 
+```bash
 go run ./cmd/agentfence-cli --help
-go run ./cmd/agentfence-cli approvals list
-go run ./cmd/agentfence-cli approvals approve <approval-id>
-go run ./cmd/agentfence-cli approvals deny <approval-id>
+go run ./cmd/agentfence-cli list-approvals --store .local/data/approvals.json
+go run ./cmd/agentfence-cli approve --store .local/data/approvals.json --actor alice <approval-id>
+go run ./cmd/agentfence-cli deny --store .local/data/approvals.json --actor alice <approval-id>
+```
 
 Adjust flags or environment variables as required by the current CLI implementation.
 
-10. Try the GitHub MCP demo
+## 10. Try the GitHub MCP demo
 
 Use the demo described in docs/demos/github-mcp.md
 .
@@ -145,7 +203,7 @@ Example policy
 
 For first local testing, use the example GitHub policy in:
 
-policies/examples/github-readonly.yaml
+policies/examples/github-production.yaml
 
 You can later switch to other example policies or create your own YAML file.
 
@@ -153,25 +211,37 @@ Local validation
 
 From the repo root:
 
+```bash
 go test ./...
+```
 
 From the web directory:
 
+```bash
 npm run build
+```
+
 Common problems
+
 Build fails because of missing Go dependencies
 
 Run:
 
+```bash
 go mod tidy
 go test ./...
+```
+
 Web build fails because of missing npm dependencies
 
 Run:
 
+```bash
 cd web
 npm install
 npm run build
+```
+
 No approvals are appearing
 
 Check:

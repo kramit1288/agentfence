@@ -67,7 +67,7 @@ Use a local config file such as:
   "upstream_timeout": "10s",
   "approval_store": ".local/data/approvals.json",
   "audit_store": ".local/data/audit.json",
-  "policy_file": "policies/examples/github-readonly.yaml"
+  "policy_file": "policies/examples/github-production.yaml"
 }
 
 Then start the gateway:
